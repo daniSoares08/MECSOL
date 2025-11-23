@@ -6,6 +6,7 @@
 #include <tice.h>
 #include <graphx.h>
 #include <keypadc.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,6 +23,13 @@ typedef struct { double A,cx,cy; } Props;
 static Rect R[MAX_RECT];
 static int N = 0;
 static double xbar = 0.0, ybar = 0.0;
+static double unit_factor = 1.0;   /* multiplicador para converter da unidade escolhida para metro */
+static const char *unit_name = "m";
+
+static inline double to_user_len(double meters)  { return meters / unit_factor; }
+static inline double to_user_area(double m2)     { double f = unit_factor; return m2 / (f * f); }
+static inline double to_user_m3(double m3)       { double f = unit_factor; return m3 / (f * f * f); }
+static inline double to_user_m4(double m4)       { double f = unit_factor; double f2 = f * f; return m4 / (f2 * f2); }
 
 /* ======== Teclado / util ======== */
 
@@ -30,6 +38,21 @@ static inline void check_on_exit(void) {
     if (kb_On) {
         gfx_End();
         exit(0);
+    }
+}
+
+/* espera soltar todas as teclas (evita propagar tecla 4 para o main) */
+static void wait_key_release(void) {
+    do { kb_Scan(); } while (kb_Data[1] | kb_Data[2] | kb_Data[3] |
+                              kb_Data[4] | kb_Data[5] | kb_Data[6] | kb_Data[7]);
+    delay(15);
+}
+
+static void set_unit_by_choice(int opt) {
+    switch (opt) {
+        case 1: unit_factor = 0.001; unit_name = "mm"; break;
+        case 2: unit_factor = 0.01;  unit_name = "cm"; break;
+        default: unit_factor = 1.0;  unit_name = "m"; break;
     }
 }
 
@@ -63,32 +86,62 @@ static uint8_t pressed_once(kb_lkey_t lk) {
     return edge;
 }
 
+/* pergunta unidade (mm/cm/m) e ajusta fator para salvar em metros */
+static void selecionar_unidade(void) {
+    gfx_FillScreen(0);
+    gfx_SetTextFGColor(1);
+    gfx_PrintStringXY("Unidade das entradas:", 2, 2);
+    gfx_PrintStringXY("1) mm", 2, 18);
+    gfx_PrintStringXY("2) cm", 2, 30);
+    gfx_PrintStringXY("3) m",  2, 42);
+    gfx_PrintStringXY("ENTER/1..3 escolhe  CLEAR volta", 2, 70);
+
+    while (1) {
+        check_on_exit();
+        kb_Scan();
+        if (pressed_once(kb_Key1)) { set_unit_by_choice(1); break; }
+        if (pressed_once(kb_Key2)) { set_unit_by_choice(2); break; }
+        if (pressed_once(kb_Key3) || pressed_once(kb_KeyEnter)) { set_unit_by_choice(3); break; }
+        if (pressed_once(kb_KeyClear)) { break; }
+        delay(10);
+    }
+    wait_key_release();
+}
+
 /* input_line (teclado estilo CENTROID no rascunho) */
 static void input_line(char *buf, int maxlen, const char *prompt){
     int idx=0; buf[0]='\0';
+    bool dirty = true;
+
+    gfx_FillScreen(0);              /* fundo branco (desenha uma vez) */
+    gfx_SetTextFGColor(1);          /* texto preto */
+    gfx_PrintStringXY(prompt, 2, 2);
+    gfx_PrintStringXY("ENTER=ok CLEAR=apaga ON=sair", 2, 78);
     for(;;){
         check_on_exit();
         kb_Scan();
-        gfx_FillScreen(0);              /* fundo branco */
-        gfx_SetTextFGColor(1);          /* texto preto */
-        gfx_PrintStringXY(prompt, 2, 2);
-        gfx_PrintStringXY(buf, 2, 18);
-        gfx_PrintStringXY("ENTER=ok CLEAR=apaga ON=sair", 2, 78);
+        if (dirty) {
+            gfx_SetColor(0);
+            gfx_FillRectangle(0, 18, 320, 12); /* limpa só a linha do buffer */
+            gfx_SetTextFGColor(1);
+            gfx_PrintStringXY(buf, 2, 18);
+            dirty = false;
+        }
 
         if (pressed_once(kb_KeyEnter)) { buf[idx]='\0'; return; }
-        if (pressed_once(kb_KeyClear)) { if (idx>0){ idx--; buf[idx]='\0'; } }
-        if (pressed_once(kb_Key0) && idx<maxlen-1){ buf[idx++]='0'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key1) && idx<maxlen-1){ buf[idx++]='1'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key2) && idx<maxlen-1){ buf[idx++]='2'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key3) && idx<maxlen-1){ buf[idx++]='3'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key4) && idx<maxlen-1){ buf[idx++]='4'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key5) && idx<maxlen-1){ buf[idx++]='5'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key6) && idx<maxlen-1){ buf[idx++]='6'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key7) && idx<maxlen-1){ buf[idx++]='7'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key8) && idx<maxlen-1){ buf[idx++]='8'; buf[idx]='\0'; }
-        if (pressed_once(kb_Key9) && idx<maxlen-1){ buf[idx++]='9'; buf[idx]='\0'; }
-        if (pressed_once(kb_KeyDecPnt) && idx<maxlen-1){ buf[idx++]='.'; buf[idx]='\0'; }
-        if (pressed_once(kb_KeyChs)    && idx<maxlen-1){ buf[idx++]='-'; buf[idx]='\0'; }
+        if (pressed_once(kb_KeyClear)) { if (idx>0){ idx--; buf[idx]='\0'; dirty = true; } }
+        if (pressed_once(kb_Key0) && idx<maxlen-1){ buf[idx++]='0'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key1) && idx<maxlen-1){ buf[idx++]='1'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key2) && idx<maxlen-1){ buf[idx++]='2'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key3) && idx<maxlen-1){ buf[idx++]='3'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key4) && idx<maxlen-1){ buf[idx++]='4'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key5) && idx<maxlen-1){ buf[idx++]='5'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key6) && idx<maxlen-1){ buf[idx++]='6'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key7) && idx<maxlen-1){ buf[idx++]='7'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key8) && idx<maxlen-1){ buf[idx++]='8'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_Key9) && idx<maxlen-1){ buf[idx++]='9'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_KeyDecPnt) && idx<maxlen-1){ buf[idx++]='.'; buf[idx]='\0'; dirty = true; }
+        if (pressed_once(kb_KeyChs)    && idx<maxlen-1){ buf[idx++]='-'; buf[idx]='\0'; dirty = true; }
         delay(10);
     }
 }
@@ -103,9 +156,7 @@ static int input_int(const char *prompt){
 }
 
 /* ======== Pequeno render de frações (tipo LatexViewer simplificado) ======== */
-/* OBS: Base funcional, tenho que implementar melhor futuramente. Meu
-    projeto de compilador latex ainda não foi finalizado, quando for, eu 
-    completo esse render
+/* OBS: Base funcional, tem que ser melhorado! TODO
 */
 
 static void draw_fraction_str(const char *num, const char *den, int cx, int y_top) {
@@ -125,6 +176,37 @@ static void draw_fraction_str(const char *num, const char *den, int cx, int y_to
     gfx_PrintStringXY(den, x_den, y_den);
 }
 
+/* ======== Helpers de super/subscrito (estilo LatexViewer simplificado) ======== */
+
+static int draw_var_pow_idx(const char *base, const char *sub, const char *sup, int x, int y) {
+    int w = 0;
+
+    if (base && *base) {
+        gfx_PrintStringXY(base, x, y);
+        w = gfx_GetStringWidth(base);
+    }
+    if (sub && *sub) {
+        /* subíndice desce um pouco */
+        gfx_PrintStringXY(sub, x + w, y + 4);
+        w += gfx_GetStringWidth(sub);
+    }
+    if (sup && *sup) {
+        /* expoente sobe um pouco */
+        gfx_PrintStringXY(sup, x + w, y - 4);
+        w += gfx_GetStringWidth(sup);
+    }
+    return x + w;
+}
+
+/* Atalhos: só expoente ou só subíndice */
+static int draw_power(const char *base, const char *sup, int x, int y) {
+    return draw_var_pow_idx(base, NULL, sup, x, y);
+}
+
+static int draw_sub(const char *base, const char *sub, int x, int y) {
+    return draw_var_pow_idx(base, sub, NULL, x, y);
+}
+
 /* ======== Cálculos de centroide e inércia ======== */
 
 static Props props(const Rect *r) {
@@ -142,11 +224,13 @@ static void tela_formula_centroide(void) {
     gfx_SetTextFGColor(1);
     gfx_PrintStringXY("CENTROIDE (retangulos)", 2, 2);
 
+    /* x_bar = Sum(A_i * x_i) / Sum(A_i) */
     gfx_PrintStringXY("x_bar =", 8, 32);
-    draw_fraction_str("Sum(A_i x_i)", "Sum(A_i)", 150, 32);
+    draw_fraction_str("Sum(A_i * x_i)", "Sum(A_i)", 150, 32);
 
+    /* y_bar = Sum(A_i * y_i) / Sum(A_i) */
     gfx_PrintStringXY("y_bar =", 8, 80);
-    draw_fraction_str("Sum(A_i y_i)", "Sum(A_i)", 150, 80);
+    draw_fraction_str("Sum(A_i * y_i)", "Sum(A_i)", 150, 80);
 
     gfx_PrintStringXY("ENTER=passos  CLEAR=voltar", 2, 140);
 }
@@ -155,44 +239,152 @@ static void tela_formula_centroide(void) {
 static void tela_formula_ix(void) {
     gfx_FillScreen(0);
     gfx_SetTextFGColor(1);
-    gfx_PrintStringXY("INERCIA Ix", 2, 2);
-    gfx_PrintStringXY("Ix = Sum( Ixc + A*dy^2 )", 2, 20);
-    gfx_PrintStringXY("Ixc = b*h^3/12 (cada ret.)", 2, 32);
-    gfx_PrintStringXY("dy = |cy - y_bar|", 2, 44);
-    gfx_PrintStringXY("ENTER=passos  CLEAR=voltar", 2, 80);
+    gfx_PrintStringXY("INERCIA Ix (eixo x)", 2, 2);
+
+    /* Ix = Sum( Ixc + A*dy^2 ) */
+    int y = 24;
+    int x = 2;
+    gfx_PrintStringXY("Ix = Sum( Ixc + A*", x, y);
+    x += gfx_GetStringWidth("Ix = Sum( Ixc + A*");
+    x = draw_power("dy", "2", x, y);
+    gfx_PrintStringXY(" )", x, y);
+
+    /* Ixc = b*h^3/12 (cada ret.) */
+    y += 12;
+    x = 2;
+    gfx_PrintStringXY("Ixc = b*", x, y);
+    x += gfx_GetStringWidth("Ixc = b*");
+    x = draw_power("h", "3", x, y);
+    gfx_PrintStringXY("/12  (cada ret.)", x, y);
+
+    /* dy = |cy - y_bar| */
+    y += 12;
+    gfx_PrintStringXY("dy = |cy - y_bar|", 2, y);
+
+    gfx_PrintStringXY("ENTER=passos  CLEAR=voltar", 2, 140);
+}
+
+/* Mostra um resumo numerico da conta do centroide (A_i, x_i, y_i, somas) */
+static bool show_centroid_summary(double SA, double SAx, double SAy,
+                                  const double *Ai,
+                                  const double *cxi,
+                                  const double *cyi,
+                                  int n) {
+    gfx_FillScreen(0);
+    gfx_SetTextFGColor(1);
+
+    gfx_PrintStringXY("CENTROIDE - resumo numerico", 2, 2);
+
+    int y = 18;
+    char buf[128];
+
+    /* Lista dos retangulos: A_i, x_i, y_i e produtos */
+    for (int i = 0; i < n && y < 120; ++i) {
+        snprintf(buf, sizeof buf,
+                 "A%d=%.3f %s^2  x%d=%.3f  y%d=%.3f %s",
+                 i+1, to_user_area(Ai[i]), unit_name,
+                 i+1, to_user_len(cxi[i]),
+                 i+1, to_user_len(cyi[i]), unit_name);
+        gfx_PrintStringXY(buf, 2, y);
+        y += 10;
+
+        snprintf(buf, sizeof buf,
+                 "A%d*x%d=%.3f  A%d*y%d=%.3f %s^3",
+                 i+1, i+1, to_user_m3(Ai[i]*cxi[i]),
+                 i+1, i+1, to_user_m3(Ai[i]*cyi[i]), unit_name);
+        gfx_PrintStringXY(buf, 2, y);
+        y += 10;
+    }
+
+    if (y < 170) {
+        y += 4;
+        snprintf(buf, sizeof buf, "Sum A_i  = %.3f %s^2", to_user_area(SA), unit_name);
+        gfx_PrintStringXY(buf, 2, y); y += 10;
+        snprintf(buf, sizeof buf, "Sum A_i*x_i = %.3f %s^3", to_user_m3(SAx), unit_name);
+        gfx_PrintStringXY(buf, 2, y); y += 10;
+        snprintf(buf, sizeof buf, "Sum A_i*y_i = %.3f %s^3", to_user_m3(SAy), unit_name);
+        gfx_PrintStringXY(buf, 2, y); y += 10;
+    }
+
+    gfx_PrintStringXY("ENTER=continua  CLEAR=voltar", 2, 210);
+
+    while (1) {
+        check_on_exit();
+        kb_Scan();
+        if (pressed_once(kb_KeyEnter)) return true;
+        if (pressed_once(kb_KeyClear)) return false;
+        delay(10);
+    }
 }
 
 /* calcula centroide; se show!=0, mostra passo a passo em telas */
 static void calc_centroid(int show) {
-    double SA = 0.0, SAx = 0.0, SAy = 0.0;
+    double SA  = 0.0, SAx = 0.0, SAy = 0.0;
+
+    /* para poder montar o resumo tipo tabela */
+    double Ai[MAX_RECT];
+    double cxi[MAX_RECT];
+    double cyi[MAX_RECT];
 
     if (show) {
         tela_formula_centroide();
-        while (1) { check_on_exit(); kb_Scan(); if (pressed_once(kb_KeyEnter)) break; if (pressed_once(kb_KeyClear)) return; }
+        while (1) {
+            check_on_exit();
+            kb_Scan();
+            if (pressed_once(kb_KeyEnter)) break;
+            if (pressed_once(kb_KeyClear)) return;
+            delay(10);
+        }
     }
 
     for (int i = 0; i < N; i++) {
         Props q = props(&R[i]);
+
         SA  += q.A;
         SAx += q.A * q.cx;
         SAy += q.A * q.cy;
+
+        Ai[i]  = q.A;
+        cxi[i] = q.cx;
+        cyi[i] = q.cy;
+
         if (show) {
-            gfx_FillScreen(0); gfx_SetTextFGColor(1);
+            gfx_FillScreen(0);
+            gfx_SetTextFGColor(1);
             char buf[64];
-            sprintf(buf, "Item %d/%d (%s)", i+1, N, R[i].rec?"REC":"MAT");
+
+            sprintf(buf, "Item %d/%d (%s)", i+1, N, R[i].rec ? "REC" : "MAT");
             gfx_PrintStringXY(buf, 2, 2);
-            sprintf(buf, "b=%.3f h=%.3f A=%.3f", R[i].w, R[i].h, q.A);
+
+            sprintf(buf, "b=%.3f %s  h=%.3f %s",
+                    to_user_len(R[i].w), unit_name,
+                    to_user_len(R[i].h), unit_name);
             gfx_PrintStringXY(buf, 2, 18);
-            sprintf(buf, "x0=%.3f y0=%.3f", R[i].x0, R[i].y0);
+
+            sprintf(buf, "A=%.3f %s^2", to_user_area(q.A), unit_name);
             gfx_PrintStringXY(buf, 2, 30);
-            sprintf(buf, "cx=%.3f cy=%.3f", q.cx, q.cy);
+
+            sprintf(buf, "cx=%.3f %s  cy=%.3f %s",
+                    to_user_len(q.cx), unit_name,
+                    to_user_len(q.cy), unit_name);
             gfx_PrintStringXY(buf, 2, 42);
-            sprintf(buf, "Ax=%.3f Ay=%.3f", q.A*q.cx, q.A*q.cy);
+
+            sprintf(buf, "A*cx=%.3f  A*cy=%.3f %s^3",
+                    to_user_m3(q.A*q.cx),
+                    to_user_m3(q.A*q.cy), unit_name);
             gfx_PrintStringXY(buf, 2, 54);
+
             gfx_PrintStringXY("ENTER=proximo  CLEAR=voltar", 2, 100);
-            while (1) { check_on_exit(); kb_Scan(); if (pressed_once(kb_KeyEnter)) break; if (pressed_once(kb_KeyClear)) return; }
+            while (1) {
+                check_on_exit();
+                kb_Scan();
+                if (pressed_once(kb_KeyEnter)) break;
+                if (pressed_once(kb_KeyClear)) return;
+                delay(10);
+            }
         }
     }
+
     if (SA != 0.0) {
         xbar = SAx / SA;
         ybar = SAy / SA;
@@ -201,73 +393,145 @@ static void calc_centroid(int show) {
     }
 
     if (show) {
-        gfx_FillScreen(0); gfx_SetTextFGColor(1);
+        /* 1) tela estilo tabela/somatorio (igual slide) */
+        if (!show_centroid_summary(SA, SAx, SAy, Ai, cxi, cyi, N))
+            return;
+
+        /* 2) tela final com a fracao pronta (resultado) */
+        gfx_FillScreen(0);
+        gfx_SetTextFGColor(1);
         char num[32], den[32];
 
-        sprintf(num, "SAx=%.3f", SAx);
-        sprintf(den, "SA=%.3f",  SA);
+        /* x_bar */
+        sprintf(num, "Sum(A_i x_i)=%.3f %s^3", to_user_m3(SAx), unit_name);
+        sprintf(den, "Sum(A_i)=%.3f %s^2",     to_user_area(SA), unit_name);
         gfx_PrintStringXY("x_bar =", 2, 24);
         draw_fraction_str(num, den, 150, 24);
 
-        sprintf(num, "SAy=%.3f", SAy);
-        sprintf(den, "SA=%.3f",  SA);
+        /* y_bar */
+        sprintf(num, "Sum(A_i y_i)=%.3f %s^3", to_user_m3(SAy), unit_name);
+        sprintf(den, "Sum(A_i)=%.3f %s^2",     to_user_area(SA), unit_name);
         gfx_PrintStringXY("y_bar =", 2, 80);
         draw_fraction_str(num, den, 150, 80);
 
         char buf[64];
-        sprintf(buf, "x_bar=%.3f  y_bar=%.3f", xbar, ybar);
+        sprintf(buf, "x_bar=%.3f %s  y_bar=%.3f %s",
+                to_user_len(xbar), unit_name,
+                to_user_len(ybar), unit_name);
         gfx_PrintStringXY(buf, 2, 140);
+
         gfx_PrintStringXY("ENTER=ok", 2, 160);
-        while (!pressed_once(kb_KeyEnter)) { check_on_exit(); kb_Scan(); }
+        while (!pressed_once(kb_KeyEnter)) {
+            check_on_exit();
+            kb_Scan();
+            delay(10);
+        }
     }
 }
 
-/* calcula Ix; se show!=0, exibe passo a passo com frações simples e termos */
+/* calcula Ix; se show!=0, exibe passo a passo */
 static double calc_Ix(int show) {
     double Ix = 0.0;
+    double termos[MAX_RECT];  /* termo_i = Ixc_i + A_i*dy_i^2 */
 
     if (show) {
         tela_formula_ix();
-        while (1) { check_on_exit(); kb_Scan(); if (pressed_once(kb_KeyEnter)) break; if (pressed_once(kb_KeyClear)) return 0.0; }
+        while (1) {
+            check_on_exit();
+            kb_Scan();
+            if (pressed_once(kb_KeyEnter)) break;
+            if (pressed_once(kb_KeyClear)) return 0.0;
+            delay(10);
+        }
     }
 
     for (int i = 0; i < N; i++) {
         Props q = props(&R[i]);
-        double Ixc_mag = (R[i].w * pow(R[i].h,3)) / 12.0;
-        double Ixc = R[i].rec ? -Ixc_mag : Ixc_mag;
-        double dy = fabs(q.cy - ybar);
-        double term = Ixc + q.A * dy * dy;
-        Ix += term;
+
+        double Ixc_mag = (R[i].w * pow(R[i].h, 3)) / 12.0;
+        double Ixc     = R[i].rec ? -Ixc_mag : Ixc_mag;
+
+        double dy   = fabs(q.cy - ybar);
+        double Ady2 = q.A * dy * dy;
+        double term = Ixc + Ady2;
+
+        Ix         += term;
+        termos[i]   = term;
+
         if (show) {
-            gfx_FillScreen(0); gfx_SetTextFGColor(1);
+            gfx_FillScreen(0);
+            gfx_SetTextFGColor(1);
             char buf[64];
-            sprintf(buf, "Item %d/%d (%s)", i+1, N, R[i].rec?"REC":"MAT");
+
+            sprintf(buf, "Item %d/%d (%s)", i+1, N, R[i].rec ? "REC" : "MAT");
             gfx_PrintStringXY(buf, 2, 2);
-            sprintf(buf, "b=%.3f h=%.3f", R[i].w, R[i].h);
+
+            sprintf(buf, "b=%.3f %s  h=%.3f %s",
+                    to_user_len(R[i].w), unit_name,
+                    to_user_len(R[i].h), unit_name);
             gfx_PrintStringXY(buf, 2, 18);
-            sprintf(buf, "cy=%.3f dy=%.3f", q.cy, dy);
+
+            sprintf(buf, "cy=%.3f %s  dy=%.3f %s",
+                    to_user_len(q.cy), unit_name,
+                    to_user_len(dy),   unit_name);
             gfx_PrintStringXY(buf, 2, 30);
-            sprintf(buf, "Ixc=%.3f A=%.3f", Ixc, q.A);
+
+            sprintf(buf, "Ixc=%.3f %s^4", to_user_m4(Ixc), unit_name);
             gfx_PrintStringXY(buf, 2, 42);
-            sprintf(buf, "Termo=%.3f", term);
+
+            sprintf(buf, "A=%.3f %s^2", to_user_area(q.A), unit_name);
             gfx_PrintStringXY(buf, 2, 54);
+
+            sprintf(buf, "A*dy^2=%.3f %s^4", to_user_m4(Ady2), unit_name);
+            gfx_PrintStringXY(buf, 2, 66);
+
+            sprintf(buf, "Termo=Ixc+A*dy^2=%.3f %s^4",
+                    to_user_m4(term), unit_name);
+            gfx_PrintStringXY(buf, 2, 78);
+
             gfx_PrintStringXY("ENTER=proximo  CLEAR=voltar", 2, 100);
-            while (1) { check_on_exit(); kb_Scan(); if (pressed_once(kb_KeyEnter)) break; if (pressed_once(kb_KeyClear)) return Ix; }
+            while (1) {
+                check_on_exit();
+                kb_Scan();
+                if (pressed_once(kb_KeyEnter)) break;
+                if (pressed_once(kb_KeyClear)) return Ix;
+                delay(10);
+            }
         }
     }
 
     if (show) {
-        gfx_FillScreen(0); gfx_SetTextFGColor(1);
-        char num[32], den[32];
-        /* Exibe Ix final em forma simples (Ix = soma dos termos) */
-        sprintf(num, "Ix_total=%.3f", Ix);
-        sprintf(den, "units^4");
-        draw_fraction_str(num, den, 160, 24);
-        gfx_PrintStringXY("ENTER=ok", 2, 140);
-        while (!pressed_once(kb_KeyEnter)) { check_on_exit(); kb_Scan(); }
+        /* tela final: soma dos termos, parecido com o slide */
+        gfx_FillScreen(0);
+        gfx_SetTextFGColor(1);
+        gfx_PrintStringXY("INERCIA Ix - resumo", 2, 2);
+
+        char buf[64];
+        int y = 18;
+
+        for (int i = 0; i < N && y < 180; ++i) {
+            sprintf(buf, "term%d = %.3f %s^4",
+                    i+1, to_user_m4(termos[i]), unit_name);
+            gfx_PrintStringXY(buf, 2, y);
+            y += 10;
+        }
+
+        y += 4;
+        sprintf(buf, "Ix = sum(term_i) = %.3f %s^4",
+                to_user_m4(Ix), unit_name);
+        gfx_PrintStringXY(buf, 2, y);
+
+        gfx_PrintStringXY("ENTER=ok", 2, 210);
+        while (!pressed_once(kb_KeyEnter)) {
+            check_on_exit();
+            kb_Scan();
+            delay(10);
+        }
     }
+
     return Ix;
 }
+
 
 /* ======== Desenho da seção (preview) ======== */
 /* desenha a seção composta por retângulos dentro da área disponível */
@@ -343,7 +607,7 @@ static void desenhar_secao_preview(void) {
 
     /* pequenos rótulos 0..width (em unidades) */
     char tmp[64];
-    sprintf(tmp, "W=%.3f", width);
+    sprintf(tmp, "W=%.3f %s", to_user_len(width), unit_name);
     gfx_SetTextFGColor(2); /* vermelho para rótulos se desejar */
     gfx_PrintStringXY(tmp, x1 - 60, y1 - 10);
     gfx_SetTextFGColor(1);
@@ -354,11 +618,14 @@ static void tela_construir(void) {
     memset(R, 0, sizeof(R));
     N = 0;
 
+    selecionar_unidade(); /* escolhe mm/cm/m antes de entrar com dados */
+
     gfx_FillScreen(0);
     gfx_SetTextFGColor(1);
-    gfx_PrintStringXY("FIGURA: retangulos (0,0) na base", 2, 2);
-    gfx_PrintStringXY("Unidade livre (mm, cm, ...)", 2, 18);
-    gfx_PrintStringXY("ENTER=ok", 2, 40);
+    char info[64];
+    snprintf(info, sizeof info, "FIGURA: retangulos (0,0) na base [%s]", unit_name);
+    gfx_PrintStringXY(info, 2, 2);
+    gfx_PrintStringXY("ENTER=ok", 2, 20);
 
     int nM = input_int("N materiais (0..12):");
     if (nM < 0) nM = 0; if (nM > MAX_RECT) nM = MAX_RECT;
@@ -367,11 +634,14 @@ static void tela_construir(void) {
 
     for (int i = 0; i < nM; ++i) {
         char t[STRBUF];
-        snprintf(t, sizeof t, "[MAT %d] b (larg.):", i+1);
-        R[N].w  = input_double(t);
-        R[N].h  = input_double("h (alt.):");
-        R[N].x0 = input_double("x0 (canto inf.):");
-        R[N].y0 = input_double("y0 (canto inf.):");
+        snprintf(t, sizeof t, "[MAT %d] b (larg.) [%s]:", i+1, unit_name);
+        R[N].w  = input_double(t) * unit_factor;
+        snprintf(t, sizeof t, "h (alt.) [%s]:", unit_name);
+        R[N].h  = input_double(t) * unit_factor;
+        snprintf(t, sizeof t, "x0 (canto inf.) [%s]:", unit_name);
+        R[N].x0 = input_double(t) * unit_factor;
+        snprintf(t, sizeof t, "y0 (canto inf.) [%s]:", unit_name);
+        R[N].y0 = input_double(t) * unit_factor;
         R[N].rec = 0;
         N++;
         /* mostrar preview entre entradas */
@@ -383,11 +653,14 @@ static void tela_construir(void) {
     }
     for (int i = 0; i < nR; ++i) {
         char t[STRBUF];
-        snprintf(t, sizeof t, "[REC %d] b (larg.):", i+1);
-        R[N].w  = input_double(t);
-        R[N].h  = input_double("h (alt.):");
-        R[N].x0 = input_double("x0 (canto inf.):");
-        R[N].y0 = input_double("y0 (canto inf.):");
+        snprintf(t, sizeof t, "[REC %d] b (larg.) [%s]:", i+1, unit_name);
+        R[N].w  = input_double(t) * unit_factor;
+        snprintf(t, sizeof t, "h (alt.) [%s]:", unit_name);
+        R[N].h  = input_double(t) * unit_factor;
+        snprintf(t, sizeof t, "x0 (canto inf.) [%s]:", unit_name);
+        R[N].x0 = input_double(t) * unit_factor;
+        snprintf(t, sizeof t, "y0 (canto inf.) [%s]:", unit_name);
+        R[N].y0 = input_double(t) * unit_factor;
         R[N].rec = 1;
         N++;
         gfx_FillScreen(0);
@@ -409,11 +682,15 @@ static void tela_menu(void) {
 
         gfx_FillScreen(0);
         gfx_SetTextFGColor(1);
-        gfx_PrintStringXY("=== MENU FORMATO ===", 2, 2);
+        gfx_PrintStringXY("=== MENU FIGURA ===", 2, 2);
+        char ubuf[32];
+        snprintf(ubuf, sizeof ubuf, "Unidade: %s", unit_name);
+        gfx_PrintStringXY(ubuf, 200, 2);
         gfx_PrintStringXY("1) Centroide (passos)", 2, 18);
         gfx_PrintStringXY("2) Inercia Ix (passos)", 2, 30);
         gfx_PrintStringXY("3) Refazer figura", 2, 42);
         gfx_PrintStringXY("4) Voltar menu principal", 2, 54);
+        gfx_PrintStringXY("5) Alterar unidade", 2, 66);
 
         /* preview abaixo */
         desenhar_secao_preview();
@@ -422,10 +699,11 @@ static void tela_menu(void) {
         while (1) {
             check_on_exit();
             kb_Scan();
-            if (pressed_once(kb_Key1)) { /* centroide passos */ calc_centroid(1); break; }
-            if (pressed_once(kb_Key2)) { /* Ix passos */ calc_Ix(1); break; }
+            if (pressed_once(kb_Key1)) { calc_centroid(1); break; }            /* centroide passos */
+            if (pressed_once(kb_Key2)) { calc_Ix(1); break; }                  /* Ix passos */
             if (pressed_once(kb_Key3)) { tela_construir(); break; }
-            if (pressed_once(kb_Key4) || pressed_once(kb_KeyClear)) { return; }
+            if (pressed_once(kb_Key5)) { selecionar_unidade(); break; }
+            if (pressed_once(kb_Key4) || pressed_once(kb_KeyClear)) { wait_key_release(); return; }
             delay(10);
         }
     }

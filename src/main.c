@@ -90,23 +90,23 @@ int main(void) {
         uint8_t key = 0;
 
         /* Tela do menu principal */
+        gfx_FillScreen(0);   /* branco */
+        gfx_SetTextFGColor(1);
+
+        gfx_PrintStringXY("=== MENU PRINCIPAL ===", 2, 2);
+        gfx_PrintStringXY("1) Formato (centroide & Ix)", 2, 18);
+        gfx_PrintStringXY("2) Viga (reacoes & internos)", 2, 30);
+        gfx_PrintStringXY("3) Max. tensoes  [TO DO]", 2, 42);
+        gfx_PrintStringXY("4) Sair", 2, 54);
         while (!key) {
             check_on_exit();
             kb_Scan();
-
-            gfx_FillScreen(0);   /* branco */
-            gfx_SetTextFGColor(1);
-
-            gfx_PrintStringXY("=== MENU PRINCIPAL ===", 2, 2);
-            gfx_PrintStringXY("1) Formato (centroide & Ix)", 2, 18);
-            gfx_PrintStringXY("2) Viga (reacoes & internos)", 2, 30);
-            gfx_PrintStringXY("3) Max. tensoes  [TO DO]", 2, 42);
-            gfx_PrintStringXY("4) Sair", 2, 54);
 
             if (pressed_once(kb_Key1)) key = 1;
             else if (pressed_once(kb_Key2)) key = 2;
             else if (pressed_once(kb_Key3)) key = 3;
             else if (pressed_once(kb_Key4)) key = 4;
+            delay(15); /* precisa disso pra tirar o flicker */
         }
 
         if (key == 1) {

@@ -114,16 +114,20 @@ static void input_line_inline(char *buf, int maxlen, const char *prompt) {
 
     int idx = 0;
     buf[0] = '\0';
+    bool dirty = true; /* só redesenha quando muda */
 
     gfx_SetTextFGColor(1);
     gfx_PrintStringXY(prompt, px, py);
 
     while (1) {
-        /* limpa faixa do buffer e redesenha texto digitado */
-        gfx_SetColor(0);
-        gfx_FillRectangle(bx, by, bw, bh);
-        gfx_SetTextFGColor(1);
-        gfx_PrintStringXY(buf, bx, by);
+        if (dirty) {
+            /* limpa faixa do buffer e redesenha texto digitado */
+            gfx_SetColor(0);
+            gfx_FillRectangle(bx, by, bw, bh);
+            gfx_SetTextFGColor(1);
+            gfx_PrintStringXY(buf, bx, by);
+            dirty = false;
+        }
 
         kb_Scan();
         if (kb_On) { gfx_End(); exit(0); }
@@ -131,7 +135,7 @@ static void input_line_inline(char *buf, int maxlen, const char *prompt) {
         /* ENTER e CLEAR/DEL */
         if (kb_Data[6] & kb_Enter) { wait_key_release(); buf[idx] = '\0'; return; }
         if ((kb_Data[6] & kb_Clear) || (kb_Data[1] & kb_Del)) {
-            if (idx > 0) { buf[--idx] = '\0'; }
+            if (idx > 0) { buf[--idx] = '\0'; dirty = true; }
             wait_key_release();
             continue;
         }
@@ -151,7 +155,7 @@ static void input_line_inline(char *buf, int maxlen, const char *prompt) {
         else if (kb_Data[4] & kb_DecPnt) cc='.';               /* ponto */
         else if ((kb_Data[6] & kb_Sub) || (kb_Data[5] & kb_Chs)) cc='-'; /* menos */
 
-        if (cc && idx < maxlen-1) { buf[idx++] = cc; buf[idx] = '\0'; wait_key_release(); }
+        if (cc && idx < maxlen-1) { buf[idx++] = cc; buf[idx] = '\0'; dirty = true; wait_key_release(); }
 
         delay(10);
     }
