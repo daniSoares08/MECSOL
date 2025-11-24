@@ -3,7 +3,8 @@ DESCRIPTION = "Viga+Secao (demo CE C)"
 COMPRESSED = YES
 ARCHIVED = YES
 
-SRC = src/main.c
+# All source files shipped with the project.
+SRC = src/main.c src/centroid.c src/viga.c src/beam.c src/tensoes.c
 
 CFLAGS = -Wall -Wextra -Oz
 LDFLAGS = -lgraphx -lkeypadc -ltice -lm

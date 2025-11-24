@@ -1,4 +1,4 @@
-/*  src/viga.h
+/*  src/beam.h
     Header VIGA para MECSOL - TI-84 Plus CE
     Autor: https://github.com/daniSoares08
 */
