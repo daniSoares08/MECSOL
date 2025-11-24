@@ -68,6 +68,15 @@ static void wait_enter_or_clear_main(void) {
     }
 }
 
+/* evita propagar uma tecla segurada para o modulo seguinte */
+static void wait_key_release(void) {
+    do {
+        kb_Scan();
+    } while (kb_Data[1] | kb_Data[2] | kb_Data[3] |
+             kb_Data[4] | kb_Data[5] | kb_Data[6] | kb_Data[7]);
+    delay(15);
+}
+
 int main(void) {
     kb_DisableOnLatch();
     gfx_Begin();
@@ -97,7 +106,7 @@ int main(void) {
         gfx_PrintStringXY("=== MENU PRINCIPAL ===", 2, 2);
         gfx_PrintStringXY("1) Formato (centroide & Ix)", 2, 18);
         gfx_PrintStringXY("2) Viga (reacoes & internos)", 2, 30);
-        gfx_PrintStringXY("3) Max. tensoes  [TO DO]", 2, 42);
+        gfx_PrintStringXY("3) Max. tensoes", 2, 42);
         gfx_PrintStringXY("4) Sair", 2, 54);
         while (!key) {
             check_on_exit();
@@ -112,14 +121,17 @@ int main(void) {
 
         if (key == 1) {
             /* Formato / centroide & Ix */
+            wait_key_release();
             centroid_module();
         }
         else if (key == 2) {
             /* Viga */
+            wait_key_release();
             viga_module();
         }
         else if (key == 3) {
             /* Max. tensoes */
+            wait_key_release();
             tensoes_module();
         }
         else if (key == 4) {
