@@ -18,6 +18,7 @@
 /* Entradas dos módulos */
 void centroid_module(void);
 void viga_module(void);
+void tensoes_module(void);
 
 /* ON sai imediatamente */
 static inline void check_on_exit(void) {
@@ -118,18 +119,8 @@ int main(void) {
             viga_module();
         }
         else if (key == 3) {
-            /* Placeholder para Máx. tensões */
-            while (1) {
-                check_on_exit();
-                kb_Scan();
-                gfx_FillScreen(0);
-                gfx_SetTextFGColor(1);
-                gfx_PrintStringXY("Max. tensoes: [TO DO]", 2, 30);
-                gfx_PrintStringXY("ENTER/CLEAR: voltar", 2, 46);
-                if (pressed_once(kb_KeyEnter) || pressed_once(kb_KeyClear)) {
-                    break;
-                }
-            }
+            /* Max. tensoes */
+            tensoes_module();
         }
         else if (key == 4) {
             running = false;

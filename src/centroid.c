@@ -26,10 +26,66 @@ static double xbar = 0.0, ybar = 0.0;
 static double unit_factor = 1.0;   /* multiplicador para converter da unidade escolhida para metro */
 static const char *unit_name = "m";
 
-static inline double to_user_len(double meters)  { return meters / unit_factor; }
-static inline double to_user_area(double m2)     { double f = unit_factor; return m2 / (f * f); }
-static inline double to_user_m3(double m3)       { double f = unit_factor; return m3 / (f * f * f); }
-static inline double to_user_m4(double m4)       { double f = unit_factor; double f2 = f * f; return m4 / (f2 * f2); }
+typedef struct { double val; const char *unit; } DispVal;
+typedef struct { double factor; const char *name; } UnitOpt;
+
+static double round_dec(double v, int dec) {
+    double s = pow(10.0, dec);
+    return round(v * s) / s;
+}
+
+/* Seleciona unidade para exibição (mm/cm/m) com base na magnitude, preferindo a unidade escolhida */
+static const UnitOpt *pick_unit(double meters) {
+    static const UnitOpt opts[] = {
+        {0.001, "mm"},
+        {0.01,  "cm"},
+        {1.0,   "m"}
+    };
+    const UnitOpt *pref = &opts[2]; /* default m */
+    for (size_t i=0;i<3;i++) if (fabs(opts[i].factor - unit_factor) < 1e-12) pref = &opts[i];
+
+    const double LOW = 0.01;
+    const double HIGH = 9999.0;
+
+    const UnitOpt *best = pref;
+    double val = (best->factor > 0.0) ? meters / best->factor : meters;
+    double amag = fabs(val);
+
+    if (amag > HIGH && best->factor < 1.0) {
+        if (best->factor < 0.01) best = &opts[1]; else best = &opts[2];
+    } else if (amag > 0 && amag < LOW && best->factor > 0.001) {
+        if (best->factor > 0.01) best = &opts[1]; else best = &opts[0];
+    }
+    return best;
+}
+
+static DispVal disp_len(double meters) {
+    const UnitOpt *u = pick_unit(meters);
+    double v = (u->factor > 0.0) ? meters / u->factor : meters;
+    return (DispVal){ v, u->name };
+}
+
+static DispVal disp_area(double m2) {
+    const UnitOpt *u = pick_unit(sqrt(fabs(m2)));
+    double f = u->factor;
+    double v = (f > 0.0) ? m2 / (f * f) : m2;
+    return (DispVal){ v, u->name };
+}
+
+static DispVal disp_m3(double m3) {
+    const UnitOpt *u = pick_unit(cbrt(fabs(m3)));
+    double f = u->factor;
+    double v = (f > 0.0) ? m3 / (f * f * f) : m3;
+    return (DispVal){ v, u->name };
+}
+
+static DispVal disp_m4(double m4) {
+    const UnitOpt *u = pick_unit(pow(fabs(m4), 0.25));
+    double f = u->factor;
+    double f2 = f * f;
+    double v = (f > 0.0) ? m4 / (f2 * f2) : m4;
+    return (DispVal){ v, u->name };
+}
 
 /* ======== Teclado / util ======== */
 
@@ -211,10 +267,10 @@ static int draw_sub(const char *base, const char *sub, int x, int y) {
 
 static Props props(const Rect *r) {
     Props p;
-    p.A = r->w * r->h;
+    p.A = round_dec(r->w * r->h, 10);
     if (r->rec) p.A = -p.A; /* recorte subtrai */
-    p.cx = r->x0 + r->w/2.0;
-    p.cy = r->y0 + r->h/2.0;
+    p.cx = round_dec(r->x0 + r->w/2.0, 10);
+    p.cy = round_dec(r->y0 + r->h/2.0, 10);
     return p;
 }
 
@@ -280,29 +336,37 @@ static bool show_centroid_summary(double SA, double SAx, double SAy,
 
     /* Lista dos retangulos: A_i, x_i, y_i e produtos */
     for (int i = 0; i < n && y < 120; ++i) {
+        DispVal a  = disp_area(Ai[i]);
+        DispVal cx = disp_len(cxi[i]);
+        DispVal cy = disp_len(cyi[i]);
         snprintf(buf, sizeof buf,
-                 "A%d=%.3f %s^2  x%d=%.3f  y%d=%.3f %s",
-                 i+1, to_user_area(Ai[i]), unit_name,
-                 i+1, to_user_len(cxi[i]),
-                 i+1, to_user_len(cyi[i]), unit_name);
+                 "A%d=%.3f %s^2  x%d=%.3f %s  y%d=%.3f %s",
+                 i+1, a.val, a.unit,
+                 i+1, cx.val, cx.unit,
+                 i+1, cy.val, cy.unit);
         gfx_PrintStringXY(buf, 2, y);
         y += 10;
 
+        DispVal ax = disp_m3(Ai[i]*cxi[i]);
+        DispVal ay = disp_m3(Ai[i]*cyi[i]);
         snprintf(buf, sizeof buf,
-                 "A%d*x%d=%.3f  A%d*y%d=%.3f %s^3",
-                 i+1, i+1, to_user_m3(Ai[i]*cxi[i]),
-                 i+1, i+1, to_user_m3(Ai[i]*cyi[i]), unit_name);
+                 "A%d*x%d=%.3f %s^3  A%d*y%d=%.3f %s^3",
+                 i+1, i+1, ax.val, ax.unit,
+                 i+1, i+1, ay.val, ay.unit);
         gfx_PrintStringXY(buf, 2, y);
         y += 10;
     }
 
     if (y < 170) {
         y += 4;
-        snprintf(buf, sizeof buf, "Sum A_i  = %.3f %s^2", to_user_area(SA), unit_name);
+        DispVal sa  = disp_area(SA);
+        DispVal sax = disp_m3(SAx);
+        DispVal say = disp_m3(SAy);
+        snprintf(buf, sizeof buf, "Sum A_i  = %.3f %s^2", sa.val, sa.unit);
         gfx_PrintStringXY(buf, 2, y); y += 10;
-        snprintf(buf, sizeof buf, "Sum A_i*x_i = %.3f %s^3", to_user_m3(SAx), unit_name);
+        snprintf(buf, sizeof buf, "Sum A_i*x_i = %.3f %s^3", sax.val, sax.unit);
         gfx_PrintStringXY(buf, 2, y); y += 10;
-        snprintf(buf, sizeof buf, "Sum A_i*y_i = %.3f %s^3", to_user_m3(SAy), unit_name);
+        snprintf(buf, sizeof buf, "Sum A_i*y_i = %.3f %s^3", say.val, say.unit);
         gfx_PrintStringXY(buf, 2, y); y += 10;
     }
 
@@ -356,22 +420,23 @@ static void calc_centroid(int show) {
             sprintf(buf, "Item %d/%d (%s)", i+1, N, R[i].rec ? "REC" : "MAT");
             gfx_PrintStringXY(buf, 2, 2);
 
-            sprintf(buf, "b=%.3f %s  h=%.3f %s",
-                    to_user_len(R[i].w), unit_name,
-                    to_user_len(R[i].h), unit_name);
+            DispVal b = disp_len(R[i].w);
+            DispVal h = disp_len(R[i].h);
+            sprintf(buf, "b=%.3f %s  h=%.3f %s", b.val, b.unit, h.val, h.unit);
             gfx_PrintStringXY(buf, 2, 18);
 
-            sprintf(buf, "A=%.3f %s^2", to_user_area(q.A), unit_name);
+            DispVal a = disp_area(q.A);
+            sprintf(buf, "A=%.3f %s^2", a.val, a.unit);
             gfx_PrintStringXY(buf, 2, 30);
 
-            sprintf(buf, "cx=%.3f %s  cy=%.3f %s",
-                    to_user_len(q.cx), unit_name,
-                    to_user_len(q.cy), unit_name);
+            DispVal cx = disp_len(q.cx);
+            DispVal cy = disp_len(q.cy);
+            sprintf(buf, "cx=%.3f %s  cy=%.3f %s", cx.val, cx.unit, cy.val, cy.unit);
             gfx_PrintStringXY(buf, 2, 42);
 
-            sprintf(buf, "A*cx=%.3f  A*cy=%.3f %s^3",
-                    to_user_m3(q.A*q.cx),
-                    to_user_m3(q.A*q.cy), unit_name);
+            DispVal acx = disp_m3(q.A * q.cx);
+            DispVal acy = disp_m3(q.A * q.cy);
+            sprintf(buf, "A*cx=%.3f  A*cy=%.3f %s^3", acx.val, acy.val, acx.unit);
             gfx_PrintStringXY(buf, 2, 54);
 
             gfx_PrintStringXY("ENTER=proximo  CLEAR=voltar", 2, 100);
@@ -385,9 +450,12 @@ static void calc_centroid(int show) {
         }
     }
 
+    SA  = round_dec(SA, 10);
+    SAx = round_dec(SAx, 10);
+    SAy = round_dec(SAy, 10);
     if (SA != 0.0) {
-        xbar = SAx / SA;
-        ybar = SAy / SA;
+        xbar = round_dec(SAx / SA, 10);
+        ybar = round_dec(SAy / SA, 10);
     } else {
         xbar = ybar = 0.0;
     }
@@ -403,21 +471,26 @@ static void calc_centroid(int show) {
         char num[32], den[32];
 
         /* x_bar */
-        sprintf(num, "Sum(A_i x_i)=%.3f %s^3", to_user_m3(SAx), unit_name);
-        sprintf(den, "Sum(A_i)=%.3f %s^2",     to_user_area(SA), unit_name);
+        DispVal sax = disp_m3(SAx);
+        DispVal sa  = disp_area(SA);
+        sprintf(num, "Sum(A_i x_i)=%.3f %s^3", sax.val, sax.unit);
+        sprintf(den, "Sum(A_i)=%.3f %s^2",     sa.val, sa.unit);
         gfx_PrintStringXY("x_bar =", 2, 24);
         draw_fraction_str(num, den, 150, 24);
 
         /* y_bar */
-        sprintf(num, "Sum(A_i y_i)=%.3f %s^3", to_user_m3(SAy), unit_name);
-        sprintf(den, "Sum(A_i)=%.3f %s^2",     to_user_area(SA), unit_name);
+        DispVal say = disp_m3(SAy);
+        sprintf(num, "Sum(A_i y_i)=%.3f %s^3", say.val, say.unit);
+        sprintf(den, "Sum(A_i)=%.3f %s^2",     sa.val, sa.unit);
         gfx_PrintStringXY("y_bar =", 2, 80);
         draw_fraction_str(num, den, 150, 80);
 
         char buf[64];
+        DispVal dxbar = disp_len(xbar);
+        DispVal dybar = disp_len(ybar);
         sprintf(buf, "x_bar=%.3f %s  y_bar=%.3f %s",
-                to_user_len(xbar), unit_name,
-                to_user_len(ybar), unit_name);
+                dxbar.val, dxbar.unit,
+                dybar.val, dybar.unit);
         gfx_PrintStringXY(buf, 2, 140);
 
         gfx_PrintStringXY("ENTER=ok", 2, 160);
@@ -448,12 +521,12 @@ static double calc_Ix(int show) {
     for (int i = 0; i < N; i++) {
         Props q = props(&R[i]);
 
-        double Ixc_mag = (R[i].w * pow(R[i].h, 3)) / 12.0;
+        double Ixc_mag = round_dec((R[i].w * pow(R[i].h, 3)) / 12.0, 10);
         double Ixc     = R[i].rec ? -Ixc_mag : Ixc_mag;
 
-        double dy   = fabs(q.cy - ybar);
-        double Ady2 = q.A * dy * dy;
-        double term = Ixc + Ady2;
+        double dy   = round_dec(fabs(q.cy - ybar), 10);
+        double Ady2 = round_dec(q.A * dy * dy, 10);
+        double term = round_dec(Ixc + Ady2, 10);
 
         Ix         += term;
         termos[i]   = term;
@@ -466,27 +539,30 @@ static double calc_Ix(int show) {
             sprintf(buf, "Item %d/%d (%s)", i+1, N, R[i].rec ? "REC" : "MAT");
             gfx_PrintStringXY(buf, 2, 2);
 
-            sprintf(buf, "b=%.3f %s  h=%.3f %s",
-                    to_user_len(R[i].w), unit_name,
-                    to_user_len(R[i].h), unit_name);
+            DispVal bw = disp_len(R[i].w);
+            DispVal bh = disp_len(R[i].h);
+            sprintf(buf, "b=%.3f %s  h=%.3f %s", bw.val, bw.unit, bh.val, bh.unit);
             gfx_PrintStringXY(buf, 2, 18);
 
-            sprintf(buf, "cy=%.3f %s  dy=%.3f %s",
-                    to_user_len(q.cy), unit_name,
-                    to_user_len(dy),   unit_name);
+            DispVal dcy = disp_len(q.cy);
+            DispVal ddy = disp_len(dy);
+            sprintf(buf, "cy=%.3f %s  dy=%.3f %s", dcy.val, dcy.unit, ddy.val, ddy.unit);
             gfx_PrintStringXY(buf, 2, 30);
 
-            sprintf(buf, "Ixc=%.3f %s^4", to_user_m4(Ixc), unit_name);
+            DispVal dIxc = disp_m4(Ixc);
+            sprintf(buf, "Ixc=%.3f %s^4", dIxc.val, dIxc.unit);
             gfx_PrintStringXY(buf, 2, 42);
 
-            sprintf(buf, "A=%.3f %s^2", to_user_area(q.A), unit_name);
+            DispVal dA = disp_area(q.A);
+            sprintf(buf, "A=%.3f %s^2", dA.val, dA.unit);
             gfx_PrintStringXY(buf, 2, 54);
 
-            sprintf(buf, "A*dy^2=%.3f %s^4", to_user_m4(Ady2), unit_name);
+            DispVal dAdy2 = disp_m4(Ady2);
+            sprintf(buf, "A*dy^2=%.3f %s^4", dAdy2.val, dAdy2.unit);
             gfx_PrintStringXY(buf, 2, 66);
 
-            sprintf(buf, "Termo=Ixc+A*dy^2=%.3f %s^4",
-                    to_user_m4(term), unit_name);
+            DispVal dterm = disp_m4(term);
+            sprintf(buf, "Termo=Ixc+A*dy^2=%.3f %s^4", dterm.val, dterm.unit);
             gfx_PrintStringXY(buf, 2, 78);
 
             gfx_PrintStringXY("ENTER=proximo  CLEAR=voltar", 2, 100);
@@ -500,6 +576,8 @@ static double calc_Ix(int show) {
         }
     }
 
+    Ix = round_dec(Ix, 10);
+
     if (show) {
         /* tela final: soma dos termos, parecido com o slide */
         gfx_FillScreen(0);
@@ -510,15 +588,15 @@ static double calc_Ix(int show) {
         int y = 18;
 
         for (int i = 0; i < N && y < 180; ++i) {
-            sprintf(buf, "term%d = %.3f %s^4",
-                    i+1, to_user_m4(termos[i]), unit_name);
+            DispVal dt = disp_m4(termos[i]);
+            sprintf(buf, "term%d = %.3f %s^4", i+1, dt.val, dt.unit);
             gfx_PrintStringXY(buf, 2, y);
             y += 10;
         }
 
         y += 4;
-        sprintf(buf, "Ix = sum(term_i) = %.3f %s^4",
-                to_user_m4(Ix), unit_name);
+        DispVal dIx = disp_m4(Ix);
+        sprintf(buf, "Ix = sum(term_i) = %.3f %s^4", dIx.val, dIx.unit);
         gfx_PrintStringXY(buf, 2, y);
 
         gfx_PrintStringXY("ENTER=ok", 2, 210);
@@ -607,7 +685,8 @@ static void desenhar_secao_preview(void) {
 
     /* pequenos rótulos 0..width (em unidades) */
     char tmp[64];
-    sprintf(tmp, "W=%.3f %s", to_user_len(width), unit_name);
+    DispVal dW = disp_len(width);
+    sprintf(tmp, "W=%.3f %s", dW.val, dW.unit);
     gfx_SetTextFGColor(2); /* vermelho para rótulos se desejar */
     gfx_PrintStringXY(tmp, x1 - 60, y1 - 10);
     gfx_SetTextFGColor(1);
@@ -635,13 +714,13 @@ static void tela_construir(void) {
     for (int i = 0; i < nM; ++i) {
         char t[STRBUF];
         snprintf(t, sizeof t, "[MAT %d] b (larg.) [%s]:", i+1, unit_name);
-        R[N].w  = input_double(t) * unit_factor;
+        R[N].w  = round_dec(input_double(t) * unit_factor, 10);
         snprintf(t, sizeof t, "h (alt.) [%s]:", unit_name);
-        R[N].h  = input_double(t) * unit_factor;
+        R[N].h  = round_dec(input_double(t) * unit_factor, 10);
         snprintf(t, sizeof t, "x0 (canto inf.) [%s]:", unit_name);
-        R[N].x0 = input_double(t) * unit_factor;
+        R[N].x0 = round_dec(input_double(t) * unit_factor, 10);
         snprintf(t, sizeof t, "y0 (canto inf.) [%s]:", unit_name);
-        R[N].y0 = input_double(t) * unit_factor;
+        R[N].y0 = round_dec(input_double(t) * unit_factor, 10);
         R[N].rec = 0;
         N++;
         /* mostrar preview entre entradas */
@@ -654,13 +733,13 @@ static void tela_construir(void) {
     for (int i = 0; i < nR; ++i) {
         char t[STRBUF];
         snprintf(t, sizeof t, "[REC %d] b (larg.) [%s]:", i+1, unit_name);
-        R[N].w  = input_double(t) * unit_factor;
+        R[N].w  = round_dec(input_double(t) * unit_factor, 10);
         snprintf(t, sizeof t, "h (alt.) [%s]:", unit_name);
-        R[N].h  = input_double(t) * unit_factor;
+        R[N].h  = round_dec(input_double(t) * unit_factor, 10);
         snprintf(t, sizeof t, "x0 (canto inf.) [%s]:", unit_name);
-        R[N].x0 = input_double(t) * unit_factor;
+        R[N].x0 = round_dec(input_double(t) * unit_factor, 10);
         snprintf(t, sizeof t, "y0 (canto inf.) [%s]:", unit_name);
-        R[N].y0 = input_double(t) * unit_factor;
+        R[N].y0 = round_dec(input_double(t) * unit_factor, 10);
         R[N].rec = 1;
         N++;
         gfx_FillScreen(0);
@@ -674,7 +753,68 @@ static void tela_construir(void) {
     calc_centroid(0);
 }
 
-/* ======== MENU do módulo ======== */
+/* ======== API P/ MODULO (MAX. TENSOES) ======== */
+
+/* retorna 1 se existir pelo menos um retangulo definido */
+int centroid_has_figure(void) {
+    return (N > 0);
+}
+
+/* devolve x_bar e y_bar em METROS (recalcula rapido, sem telas) */
+void centroid_get_centroid(double *px, double *py) {
+    if (N <= 0) {
+        if (px) *px = 0.0;
+        if (py) *py = 0.0;
+        return;
+    }
+    /* garante xbar/ybar atualizados */
+    calc_centroid(0);
+
+    if (px) *px = round_dec(xbar, 8);
+    if (py) *py = round_dec(ybar, 8);
+}
+
+/* devolve Ix em m^4 (recalcula silenciosamente se preciso) */
+double centroid_get_Ix(void) {
+    if (N <= 0) return 0.0;
+
+    /* assegura ybar correto antes de calcular Ix */
+    calc_centroid(0);
+    return round_dec(calc_Ix(0), 8);
+}
+
+/* limites inferiores/superiores em y (em METROS, sistema interno) */
+void centroid_get_y_bounds(double *pymin, double *pymax) {
+    if (N <= 0) {
+        if (pymin) *pymin = 0.0;
+        if (pymax) *pymax = 0.0;
+        return;
+    }
+
+    double miny = 1e9, maxy = -1e9;
+    for (int i = 0; i < N; ++i) {
+        double y0 = R[i].y0;
+        double y1 = R[i].y0 + R[i].h;
+        if (y0 < miny) miny = y0;
+        if (y1 > maxy) maxy = y1;
+    }
+
+    if (pymin) *pymin = round_dec(miny, 8);
+    if (pymax) *pymax = round_dec(maxy, 8);
+}
+
+/* unidade usada na figura ("mm", "cm" ou "m") */
+const char *centroid_get_unit_name(void) {
+    return unit_name;
+}
+
+/* fator p/ converter UNIDADE -> metro (mesmo usado internamente) */
+double centroid_get_unit_factor(void) {
+    return unit_factor;
+}
+
+
+/* ======== MENU ======== */
 static void tela_menu(void) {
     for (;;) {
         check_on_exit();

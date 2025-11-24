@@ -812,6 +812,80 @@ static void obter_dados(void) {
     }
 }
 
+/* ======== PEQUENA API P/ MODULO DE TENSOES ======== */
+
+/* indica se existe uma viga configurada */
+int viga_has_beam(void) {
+    return (L > 0.0 && n_apoios > 0);
+}
+
+/* retorna comprimento da viga (m) */
+double viga_get_length(void) {
+    return L;
+}
+
+/* momento fletor em um ponto x (m). Se nao conseguir resolver reacoes, retorna 0 */
+double viga_momento_em(double x) {
+    double V, M;
+
+    if (!resolver_reacoes()) return 0.0;
+    if (L <= 0.0) return 0.0;
+
+    if (x < 0.0) x = 0.0;
+    if (x > L)   x = L;
+
+    calcular_forcas_internas_em(x, &V, &M);
+    return M;
+}
+
+/* procura M de maior modulo ao longo da viga.
+   Retorna M (com sinal). Se px_max != NULL, grava ali a coordenada correspondente. */
+double viga_momento_max_abs(double *px_max) {
+    double V, M;
+
+    if (!resolver_reacoes()) {
+        if (px_max) *px_max = 0.0;
+        return 0.0;
+    }
+    if (L <= 0.0) {
+        if (px_max) *px_max = 0.0;
+        return 0.0;
+    }
+
+    double ev[MAX_EVENTS];
+    int nev = coletar_eventos(ev, MAX_EVENTS);
+    if (nev < 2) {
+        if (px_max) *px_max = 0.0;
+        return 0.0;
+    }
+
+    const int SAMP = 16;
+    double bestM  = 0.0;
+    double maxAbs = 0.0;
+    double bestX  = 0.0;
+
+    for (int i = 0; i < nev-1; ++i) {
+        double a = ev[i];
+        double b = ev[i+1];
+        for (int k = 0; k <= SAMP; ++k) {
+            double x = a + (b - a) * (double)k / (double)SAMP;
+            if (x < 0.0) x = 0.0;
+            if (x > L)   x = L;
+
+            calcular_forcas_internas_em(x, &V, &M);
+            double am = fabs(M);
+            if (am > maxAbs) {
+                maxAbs = am;
+                bestM  = M;
+                bestX  = x;
+            }
+        }
+    }
+
+    if (px_max) *px_max = bestX;
+    return bestM;
+}
+
 /* ======== MENU ======== */
 
 static char ler_opcao_menu(void) {
