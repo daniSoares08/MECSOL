@@ -35,6 +35,8 @@ double centroid_get_unit_factor(void);
 
 int    viga_has_beam(void);
 double viga_get_length(void);
+const char *viga_get_unit_name(void);
+double viga_get_unit_factor(void);
 double viga_momento_em(double x);
 double viga_momento_max_abs(double *px_max);
 
@@ -282,7 +284,7 @@ static void draw_page_tensoes(double M, double x_pos, int origem,
     gfx_PrintStringXY("ETAPA 3 - TENSOES POR FLEXAO", 2, 2);
 
     char buf[STRBUF];
-    DispVal dxpos = disp_len(x_pos, unit_factor);
+    DispVal dxpos = disp_len(x_pos, viga_get_unit_factor());
 
     if (origem == 0) {
         gfx_PrintStringXY("Caso: momento informado (sem viga)", 2, 18);
@@ -478,16 +480,24 @@ static void fluxo_sem_viga(void) {
         }
         else if (opt == 2) {
             /* Viga simplesmente apoiada com carga P em a (bem basico) */
-            double L = input_double("Viga simples: comprimento L (m):");
-            if (L <= 0.0) continue;
+            double unit_len = centroid_get_unit_factor();
+            const char *uname = centroid_get_unit_name();
+            double L;
+            while (1) {
+                char buf_unit[STRBUF];
+                snprintf(buf_unit, sizeof buf_unit, "Viga simples: comprimento L (%s):", uname ? uname : "m");
+                L = input_double(buf_unit) * unit_len;
+                if (L > 0.0) break;
+            }
 
             double P = input_double("Carga pontual P (N, >0 p/baixo):");
 
             double a;
             while (1) {
                 char buf[STRBUF];
-                sprintf(buf, "Posicao da carga a (m, 0..%.3f):", L);
-                a = input_double(buf);
+                double L_show = (unit_len > 0.0) ? (L / unit_len) : L;
+                sprintf(buf, "Posicao da carga a (%s, 0..%.3f):", uname ? uname : "m", L_show);
+                a = input_double(buf) * unit_len;
                 if (a >= 0.0 && a <= L) break;
             }
 
@@ -529,12 +539,15 @@ static void fluxo_com_viga(void) {
 
         if (opt == 1) {
             /* SIG em ponto x da viga (usa M(x) da viga) */
+            double unit_len = viga_get_unit_factor();
+            const char *uname = viga_get_unit_name();
             double L = viga_get_length();
             double x;
             while (1) {
                 char buf[STRBUF];
-                sprintf(buf, "Posicao x (m, 0..%.3f):", L);
-                x = input_double(buf);
+                double L_show = (unit_len > 0.0) ? (L / unit_len) : L;
+                sprintf(buf, "Posicao x (%s, 0..%.3f):", uname, L_show);
+                x = input_double(buf) * unit_len;
                 if (x >= 0.0 && x <= L) break;
             }
             double M = viga_momento_em(x);

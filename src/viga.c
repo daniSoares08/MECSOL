@@ -14,6 +14,11 @@
 
 #include "beam.h"   /* já integrado ao projeto, reservado p/ usos futuros */
 
+/* ======== API externa do módulo FORMATO (centroid.c) ======== */
+int centroid_has_figure(void);
+const char *centroid_get_unit_name(void);
+double centroid_get_unit_factor(void);
+
 #define MAX_APOIOS   2
 #define MAX_CARGAS_P 8
 #define MAX_CARGAS_D 6
@@ -23,6 +28,8 @@
 
 #define MAX_EVENTS (2 + MAX_APOIOS + MAX_CARGAS_P + 2*MAX_CARGAS_D + MAX_MOMENTOS)
 #define MAX_LABELS (2*MAX_EVENTS + 2)
+
+typedef struct { double factor; const char *name; } UnitOpt;
 
 /* --- estruturas --- */
 typedef struct { char tipo; double pos; double Ry; double Ma; } Apoio;
@@ -43,6 +50,16 @@ static CargaP  cargas_p[MAX_CARGAS_P]; static int n_cargas_p = 0;
 static CargaD  cargas_d[MAX_CARGAS_D]; static int n_cargas_d = 0;
 static Momento momentos[MAX_MOMENTOS]; static int n_momentos = 0;
 static double  pontos[MAX_PONTOS];     static int n_pontos   = 0;
+static double  unit_formato = 1.0;     /* fator da figura (para metro) */
+static const char *unit_formato_name = "m";
+static double  unit_viga = 1.0;        /* fator escolhido para exibição/entrada */
+static const char *unit_viga_name = "m";
+
+static const UnitOpt UOPTS[] = {
+    {0.001, "mm"},
+    {0.01,  "cm"},
+    {1.0,   "m"},
+};
 
 /* ======== UTIL GRÁFICO ======== */
 static void scr_clear(void) {
@@ -100,6 +117,68 @@ static void wait_enter_or_on(void) {
         kb_Scan();
         if (kb_On) { gfx_End(); exit(0); }
         if (kb_Data[6] & kb_Enter) { wait_key_release(); return; }
+        delay(10);
+    }
+}
+
+/* ======== UNIDADES ======== */
+static void set_unit_viga_by_factor(double factor) {
+    unit_viga = factor;
+    unit_viga_name = "m";
+    for (size_t i = 0; i < sizeof(UOPTS)/sizeof(UOPTS[0]); i++) {
+        if (fabs(UOPTS[i].factor - factor) < 1e-9) {
+            unit_viga = UOPTS[i].factor;
+            unit_viga_name = UOPTS[i].name;
+            break;
+        }
+    }
+}
+
+static void sync_units_with_formato(void) {
+    if (centroid_has_figure()) {
+        unit_formato = centroid_get_unit_factor();
+        unit_formato_name = centroid_get_unit_name();
+    } else {
+        unit_formato = 1.0;
+        unit_formato_name = "m";
+    }
+    set_unit_viga_by_factor(unit_formato);
+}
+
+static inline double len_to_calc(double val_in_unit) {
+    return val_in_unit * unit_viga; /* converte p/ metro */
+}
+
+static inline double len_from_calc(double val_m) {
+    return (unit_viga > 0.0) ? (val_m / unit_viga) : val_m;
+}
+
+static inline double distload_to_calc(double val_in_unit) {
+    /* N/(unidade) -> N/m */
+    return (unit_viga > 0.0) ? (val_in_unit / unit_viga) : val_in_unit;
+}
+
+static void selecionar_unidade_viga(void) {
+    scr_clear();
+    gfx_SetTextFGColor(1);
+    gfx_PrintStringXY("Unidade para exibir/digitar na viga:", 2, 2);
+    gfx_PrintStringXY("1) mm", 2, 18);
+    gfx_PrintStringXY("2) cm", 2, 30);
+    gfx_PrintStringXY("3) m",  2, 42);
+
+    char buf[STRBUF];
+    snprintf(buf, sizeof buf, "Figura usa: %s (calculado nessa unidade)", unit_formato_name);
+    gfx_PrintStringXY(buf, 2, 62);
+    gfx_PrintStringXY("ENTER/1..3 escolhe  CLEAR volta", 2, 78);
+
+    while (1) {
+        check_on_exit();
+        kb_Scan();
+        if (kb_Data[6] & kb_Clear) { wait_key_release(); return; }
+        if (kb_Data[6] & kb_Enter) { set_unit_viga_by_factor(unit_formato); wait_key_release(); return; }
+        if (kb_Data[3] & kb_1) { set_unit_viga_by_factor(UOPTS[0].factor); wait_key_release(); return; }
+        if (kb_Data[4] & kb_2) { set_unit_viga_by_factor(UOPTS[1].factor); wait_key_release(); return; }
+        if (kb_Data[5] & kb_3) { set_unit_viga_by_factor(UOPTS[2].factor); wait_key_release(); return; }
         delay(10);
     }
 }
@@ -222,7 +301,7 @@ static void calcular_reacoes(void) {
         a->Ma = -soma_me;
 
         char buf[STRBUF];
-        sprintf(buf, "Apoio x=%.3f m", a->pos);             scr_print_xy(buf, 2, 22);
+        sprintf(buf, "Apoio x=%.3f %s", len_from_calc(a->pos), unit_viga_name);             scr_print_xy(buf, 2, 22);
         sprintf(buf, "  Reacao Vertical = %.3f N", a->Ry);  scr_print_xy(buf, 2, 34);
         sprintf(buf, "  Reacao Momento = %.3f Nm", a->Ma);  scr_print_xy(buf, 2, 46);
 
@@ -257,8 +336,8 @@ static void calcular_reacoes(void) {
             B->Ry =  soma_ma / (pos_b - pos_a);
             A->Ry = soma_fy - B->Ry;
 
-            sprintf(buf, "Apoio x=%.3f m: Ry=%.3f N", A->pos, A->Ry);  scr_print_xy(buf, 2, 22);
-            sprintf(buf, "Apoio x=%.3f m: Ry=%.3f N", B->pos, B->Ry);  scr_print_xy(buf, 2, 34);
+            sprintf(buf, "Apoio x=%.3f %s: Ry=%.3f N", len_from_calc(A->pos), unit_viga_name, A->Ry);  scr_print_xy(buf, 2, 22);
+            sprintf(buf, "Apoio x=%.3f %s: Ry=%.3f N", len_from_calc(B->pos), unit_viga_name, B->Ry);  scr_print_xy(buf, 2, 34);
             (void)wait_enter_or_clear("ENTER/CLEAR: voltar");
         } else {
             scr_print_xy("Apoios na mesma posicao!", 2, 22);
@@ -500,7 +579,7 @@ static void desenhar_viga_menu(void) {
     /* legenda simples: 0 e L */
     char buf[STRBUF];
     sprintf(buf, "0");   gfx_PrintStringXY(buf, x0 - 4, y_beam + 14);
-    sprintf(buf, "%.2f", L);
+    sprintf(buf, "%.2f %s", len_from_calc(L), unit_viga_name);
     gfx_PrintStringXY(buf, x1 - 28, y_beam + 14);
 }
 
@@ -686,8 +765,9 @@ static void desenhar_legenda(bool isV,
     for (int i=0;i<nlab;i++){
         char line[64];
         double val = Lab[i].val * u;
-        if (fabs(val) < 1000.0) sprintf(line, "%-3s x=%.2f m  %.2f %s", Lab[i].tag, Lab[i].xq, val, unit_title);
-        else                    sprintf(line, "%-3s x=%.2f m  %.1f %s", Lab[i].tag, Lab[i].xq, val, unit_title);
+        double x_show = len_from_calc(Lab[i].xq);
+        if (fabs(val) < 1000.0) sprintf(line, "%-3s x=%.2f %s  %.2f %s", Lab[i].tag, x_show, unit_viga_name, val, unit_title);
+        else                    sprintf(line, "%-3s x=%.2f %s  %.1f %s", Lab[i].tag, x_show, unit_viga_name, val, unit_title);
         gfx_PrintStringXY(line, 8, y);
         y += 12; if (y > 208) break;
     }
@@ -751,8 +831,11 @@ static void obter_dados(void) {
 
     /* 1) comprimento */
     while (1) {
-        double t = input_double("1) Comprimento da viga (m):");
-        if (t > 0.0) { L = t; break; }
+        char msg[STRBUF];
+        snprintf(msg, sizeof msg, "1) Comprimento da viga (%s):", unit_viga_name);
+        double t = input_double(msg);
+        double Lcalc = len_to_calc(t);
+        if (Lcalc > 0.0) { L = Lcalc; break; }
     }
 
     /* 2) apoios */
@@ -766,8 +849,8 @@ static void obter_dados(void) {
         apoios[i].tipo = (ta == 2) ? 'E' : 'S';
 
         while (1) {
-            sprintf(tmp, "   Apoio %d - Posicao (m, 0..%.3f):", i+1, L);
-            double p = input_double(tmp);
+            sprintf(tmp, "   Apoio %d - Posicao (%s, 0..%.3f):", i+1, unit_viga_name, len_from_calc(L));
+            double p = len_to_calc(input_double(tmp));
             if (p >= 0.0 && p <= L) { apoios[i].pos = p; break; }
         }
         apoios[i].Ry = 0.0; apoios[i].Ma = 0.0;
@@ -777,8 +860,8 @@ static void obter_dados(void) {
     n_cargas_p = input_int("4) N de cargas pontuais (0..8):");
     if (n_cargas_p > MAX_CARGAS_P) n_cargas_p = MAX_CARGAS_P;
     for (int i=0;i<n_cargas_p;i++) {
-        sprintf(tmp, "5) Carga pontual %d - Posicao (m):", i+1);
-        cargas_p[i].pos = input_double(tmp);
+        sprintf(tmp, "5) Carga pontual %d - Posicao (%s):", i+1, unit_viga_name);
+        cargas_p[i].pos = len_to_calc(input_double(tmp));
         sprintf(tmp, "   Carga pontual %d - Forca (N, >0 p/ baixo):", i+1);
         cargas_p[i].F = input_double(tmp);
     }
@@ -787,22 +870,22 @@ static void obter_dados(void) {
     n_cargas_d = input_int("6) N de cargas distribuidas (0..6):");
     if (n_cargas_d > MAX_CARGAS_D) n_cargas_d = MAX_CARGAS_D;
     for (int i=0;i<n_cargas_d;i++) {
-        sprintf(tmp, "7) Carga dist %d - X inicial (m):", i+1);
-        cargas_d[i].x_ini = input_double(tmp);
-        sprintf(tmp, "   Carga dist %d - X final (m):", i+1);
-        cargas_d[i].x_fim = input_double(tmp);
-        sprintf(tmp, "   Carga dist %d - F inicial (N/m):", i+1);
-        cargas_d[i].f_ini = input_double(tmp);
-        sprintf(tmp, "   Carga dist %d - F final (N/m):", i+1);
-        cargas_d[i].f_fim = input_double(tmp);
+        sprintf(tmp, "7) Carga dist %d - X inicial (%s):", i+1, unit_viga_name);
+        cargas_d[i].x_ini = len_to_calc(input_double(tmp));
+        sprintf(tmp, "   Carga dist %d - X final (%s):", i+1, unit_viga_name);
+        cargas_d[i].x_fim = len_to_calc(input_double(tmp));
+        sprintf(tmp, "   Carga dist %d - F inicial (N/%s):", i+1, unit_viga_name);
+        cargas_d[i].f_ini = distload_to_calc(input_double(tmp));
+        sprintf(tmp, "   Carga dist %d - F final (N/%s):", i+1, unit_viga_name);
+        cargas_d[i].f_fim = distload_to_calc(input_double(tmp));
     }
 
     /* 8) momentos */
     n_momentos = input_int("8) N de momentos (0..6):");
     if (n_momentos > MAX_MOMENTOS) n_momentos = MAX_MOMENTOS;
     for (int i=0;i<n_momentos;i++) {
-        sprintf(tmp, "9) Momento %d - Posicao (m):", i+1);
-        momentos[i].pos = input_double(tmp);
+        sprintf(tmp, "9) Momento %d - Posicao (%s):", i+1, unit_viga_name);
+        momentos[i].pos = len_to_calc(input_double(tmp));
         sprintf(tmp, "   Momento %d - Valor (Nm, horario>0):", i+1);
         momentos[i].val = input_double(tmp);
     }
@@ -811,9 +894,9 @@ static void obter_dados(void) {
     n_pontos = input_int("10) N de pontos p/ calculo (0..20):");
     if (n_pontos > MAX_PONTOS) n_pontos = MAX_PONTOS;
     for (int i=0;i<n_pontos;i++) {
-        sprintf(tmp, "11) Ponto %d - Posicao (m, 0..%.3f):", i+1, L);
+        sprintf(tmp, "11) Ponto %d - Posicao (%s, 0..%.3f):", i+1, unit_viga_name, len_from_calc(L));
         while (1) {
-            double px = input_double(tmp);
+            double px = len_to_calc(input_double(tmp));
             if (px >= 0.0 && px <= L) { pontos[i] = px; break; }
         }
     }
@@ -824,6 +907,14 @@ static void obter_dados(void) {
 /* indica se existe uma viga configurada */
 int viga_has_beam(void) {
     return (L > 0.0 && n_apoios > 0);
+}
+
+const char *viga_get_unit_name(void) {
+    return unit_viga_name;
+}
+
+double viga_get_unit_factor(void) {
+    return unit_viga;
 }
 
 /* retorna comprimento da viga (m) */
@@ -901,14 +992,18 @@ static char ler_opcao_menu(void) {
     scr_clear();
     gfx_SetTextFGColor(1);
     scr_print_xy("=== MENU VIGA ===", 2, 2);
+    char ubuf[32];
+    snprintf(ubuf, sizeof ubuf, "Unidade: %s", unit_viga_name);
+    scr_print_xy(ubuf, 200, 2);
     scr_print_xy("1) Calcular Reacoes de Apoio", 2, 18);
     scr_print_xy("2) Forcas Internas nos Pontos", 2, 30);
     scr_print_xy("3) Diagramas V e M", 2, 42);
     scr_print_xy("4) Voltar menu principal", 2, 54);
+    scr_print_xy("5) Unidade de medida", 2, 66);
 
     desenhar_viga_menu();  /* viga desenhada abaixo do menu */
 
-    input_line_inline(sel, STRBUF, "Escolha (1-4) e ENTER:");
+    input_line_inline(sel, STRBUF, "Escolha (1-5) e ENTER:");
     return sel[0];
 }
 
@@ -934,7 +1029,7 @@ static void menu_loop(void) {
                     scr_clear();
                     gfx_SetTextFGColor(1);
                     sprintf(buf, "Resultado no ponto %d/%d", i+1, n_pontos);  scr_print_xy(buf, 2, 2);
-                    sprintf(buf, "x = %.3f m", pontos[i]);                    scr_print_xy(buf, 2, 18);
+                    sprintf(buf, "x = %.3f %s", len_from_calc(pontos[i]), unit_viga_name);                    scr_print_xy(buf, 2, 18);
                     sprintf(buf, "  V = %.3f N", V);                           scr_print_xy(buf, 2, 30);
                     sprintf(buf, "  M = %.3f Nm", M);                          scr_print_xy(buf, 2, 42);
 
@@ -946,6 +1041,9 @@ static void menu_loop(void) {
         else if (op == '3') {
             mostrar_diagramas(); /* alterna V/M com ENTER, CLEAR volta */
         }
+        else if (op == '5') {
+            selecionar_unidade_viga();
+        }
         else if (op == '4' || op == '0' || op == '9') {
             /* Voltar ao menu principal do MECAN */
             return;
@@ -955,6 +1053,7 @@ static void menu_loop(void) {
 
 /* Função pública chamada pelo main.c do MECAN */
 void viga_module(void) {
+    sync_units_with_formato();
     /* Se ainda não tiver viga definida, pede dados */
     if (L <= 0.0 || n_apoios == 0) {
         obter_dados();
