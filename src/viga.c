@@ -340,14 +340,17 @@ static void calcular_forcas_internas_em(double x, double *V_out, double *M_out) 
         Apoio *a = &apoios[i];
         if (a->pos < x) {
             V += a->Ry;
-            M -= a->Ry * (x - a->pos);
+            /* Momento fletor deve seguir a convencao sagging positivo.
+               A contribuicao da reacao cortante aumenta (nao diminui)
+               o momento conforme a distancia do apoio. */
+            M += a->Ry * (x - a->pos);
             M += a->Ma;
         }
     }
 
     /* cargas pontuais */
     for (int i=0;i<n_cargas_p;i++) {
-        if (cargas_p[i].pos < x) {
+        if (cargas_p[i].pos <= x) {
             V -= cargas_p[i].F;
             M += cargas_p[i].F * (x - cargas_p[i].pos);
         }
@@ -369,19 +372,23 @@ static void calcular_forcas_internas_em(double x, double *V_out, double *M_out) 
             double dx = x - a;
             double Fseg = qa*dx + 0.5*m*dx*dx;
             V -= Fseg;
-            M += 0.5*qa*dx*dx + (1.0/6.0)*m*dx*dx*dx;
+            /* Carga distribuida reduz o momento (sinal oposto ao Ry) */
+            M -= 0.5*qa*dx*dx + (1.0/6.0)*m*dx*dx*dx;
         } else {
             /* após o fim: usa resultante total e seu baricentro */
             double Ftot = qa*Ld + 0.5*m*Ld*Ld;                 /* = (qa+qb)/2 * Ld */
             V -= Ftot;
             double Ma_about_a = 0.5*qa*Ld*Ld + (1.0/3.0)*m*Ld*Ld*Ld;  /* ∫ t q(t) dt */
-            M += (x - a)*Ftot - Ma_about_a;                 /* = Ftot*(x - x_res) */
+            M -= (x - a)*Ftot - Ma_about_a;                 /* = -Ftot*(x - x_res) */
         }
     }
 
     /* momentos aplicados (positivo = horário) */
     for (int i=0;i<n_momentos;i++) {
-        if (momentos[i].pos < x) M -= momentos[i].val;
+        /* O sinal do momento aplicado deve ser somado diretamente segundo
+           a convencao declarada (horario > 0). Subtrair aqui dobrava o
+           efeito e distorcia o diagrama de M. */
+        if (momentos[i].pos <= x) M += momentos[i].val;
     }
 
     *V_out = V;
