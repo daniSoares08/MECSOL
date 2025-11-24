@@ -18,8 +18,21 @@
 
 #define STRBUF 64
 
-typedef struct { double val; const char *unit; double factor; } DispVal;
-typedef struct { double factor; const char *name; } UnitOpt;
+typedef struct {
+    double val;
+    const char *unit;
+    double factor;
+} DispVal;
+
+typedef struct {
+    double factor;
+    const char *name;
+} UnitOpt;
+
+typedef struct {
+    double preferred_factor;
+    bool strict_si;
+} DispConfig;
 
 /* ======== API externa que vem de centroid.c ======== */
 /* (implementadas lá no fim do arquivo) */
@@ -48,7 +61,8 @@ static const UnitOpt UOPTS[] = {
     {1.0,   "m"},
 };
 
-static const UnitOpt *pick_unit(double meters, double preferred_factor) {
+static const UnitOpt *pick_unit(double meters, double preferred_factor, bool strict_si) {
+    if (strict_si) return &UOPTS[2];
     const UnitOpt *pref = &UOPTS[2];
     for (size_t i=0;i<3;i++) if (fabs(UOPTS[i].factor - preferred_factor) < 1e-12) pref = &UOPTS[i];
 
@@ -67,14 +81,14 @@ static const UnitOpt *pick_unit(double meters, double preferred_factor) {
     return best;
 }
 
-static DispVal disp_len(double meters, double preferred_factor) {
-    const UnitOpt *u = pick_unit(meters, preferred_factor);
+static DispVal disp_len(double meters, DispConfig cfg) {
+    const UnitOpt *u = pick_unit(meters, cfg.preferred_factor, cfg.strict_si);
     double v = (u->factor > 0.0) ? meters / u->factor : meters;
     return (DispVal){ v, u->name, u->factor };
 }
 
-static DispVal disp_pow(double meters_pow, double preferred_factor, int power) {
-    const UnitOpt *u = pick_unit(pow(fabs(meters_pow), 1.0/power), preferred_factor);
+static DispVal disp_pow(double meters_pow, DispConfig cfg, int power) {
+    const UnitOpt *u = pick_unit(pow(fabs(meters_pow), 1.0/power), cfg.preferred_factor, cfg.strict_si);
     double f = u->factor;
     double denom = 1.0;
     for (int i=0;i<power;i++) denom *= f;
@@ -82,8 +96,8 @@ static DispVal disp_pow(double meters_pow, double preferred_factor, int power) {
     return (DispVal){ v, u->name, u->factor };
 }
 
-static DispVal disp_m4(double m4, double preferred_factor) {
-    return disp_pow(m4, preferred_factor, 4);
+static DispVal disp_m4(double m4, DispConfig cfg) {
+    return disp_pow(m4, cfg, 4);
 }
 
 /* converte SIG [N/m^2] para N/(unit)^2 usando o fator da unidade escolhida */
@@ -213,12 +227,45 @@ static double input_double(const char *prompt){
 
 /* ======== CONVERSÕES DE UNIDADE ======== */
 
+static DispConfig selecionar_unidade_resposta(double base_factor, const char *base_unit) {
+    DispConfig cfg = { base_factor, false };
+    (void)base_unit;
+
+    gfx_FillScreen(0);
+    gfx_SetTextFGColor(1);
+    gfx_PrintStringXY("Unidade das respostas:", 2, 2);
+    gfx_PrintStringXY("1) Auto (usa a unidade do formato)", 2, 18);
+    gfx_PrintStringXY("2) Forcar mm", 2, 30);
+    gfx_PrintStringXY("3) Forcar cm", 2, 42);
+    gfx_PrintStringXY("4) S.I. (m, sem simplificar m)", 2, 54);
+    gfx_PrintStringXY("ENTER/1..4 escolhe  CLEAR volta", 2, 78);
+
+    while (1) {
+        check_on_exit();
+        kb_Scan();
+        if (pressed_once(kb_Key1)) { cfg.preferred_factor = base_factor; cfg.strict_si = false; break; }
+        if (pressed_once(kb_Key2)) { cfg.preferred_factor = 0.001; cfg.strict_si = false; break; }
+        if (pressed_once(kb_Key3)) { cfg.preferred_factor = 0.01;  cfg.strict_si = false; break; }
+        if (pressed_once(kb_Key4) || pressed_once(kb_KeyEnter)) { cfg.preferred_factor = 1.0; cfg.strict_si = true; break; }
+        if (pressed_once(kb_KeyClear)) { break; }
+        delay(10);
+    }
+
+    /* Se a unidade base nao eh "m" e usuario pediu S.I., usa forcar metro */
+    if (cfg.strict_si) {
+        cfg.preferred_factor = 1.0;
+    }
+
+    wait_key_release();
+    return cfg;
+}
+
 /* ======== TELAS DAS 3 ETAPAS ======== */
 
 /* etapa 1: centroide */
 static void draw_page_centroid(double xbar, double ybar,
                                const char *unit_name,
-                               double unit_factor) {
+                               DispConfig disp_cfg) {
     (void)unit_name; /* unidade real exibida ajustada dinamicamente */
     gfx_FillScreen(0);
     gfx_SetTextFGColor(1);
@@ -230,10 +277,10 @@ static void draw_page_centroid(double xbar, double ybar,
     gfx_PrintStringXY("y_bar = Sum(Ai*yi) / Sum(Ai)", 2, 44);
 
     char buf[STRBUF];
-    DispVal dx = disp_len(xbar, unit_factor);
+    DispVal dx = disp_len(xbar, disp_cfg);
     sprintf(buf, "x_bar = %.3f %s", dx.val, dx.unit);
     gfx_PrintStringXY(buf, 2, 70);
-    DispVal dy = disp_len(ybar, unit_factor);
+    DispVal dy = disp_len(ybar, disp_cfg);
     sprintf(buf, "y_bar = %.3f %s", dy.val, dy.unit);
     gfx_PrintStringXY(buf, 2, 82);
 
@@ -244,7 +291,7 @@ static void draw_page_centroid(double xbar, double ybar,
 static void draw_page_inercia(double Ix,
                               double y_sup, double y_inf,
                               const char *unit_name,
-                              double unit_factor) {
+                              DispConfig disp_cfg) {
     (void)unit_name;
     gfx_FillScreen(0);
     gfx_SetTextFGColor(1);
@@ -255,15 +302,15 @@ static void draw_page_inercia(double Ix,
     gfx_PrintStringXY("Ixc_i (ret) = b*h^3 / 12", 2, 32);
 
     char buf[STRBUF];
-    DispVal dIx = disp_m4(Ix, unit_factor);
+    DispVal dIx = disp_m4(Ix, disp_cfg);
     sprintf(buf, "Ix = %.3f %s^4", dIx.val, dIx.unit);
     gfx_PrintStringXY(buf, 2, 56);
 
-    DispVal dSup = disp_len(y_sup, unit_factor);
+    DispVal dSup = disp_len(y_sup, disp_cfg);
     sprintf(buf, "y_sup = %.3f %s (fibra superior)", dSup.val, dSup.unit);
     gfx_PrintStringXY(buf, 2, 74);
 
-    DispVal dInf = disp_len(y_inf, unit_factor);
+    DispVal dInf = disp_len(y_inf, disp_cfg);
     sprintf(buf, "y_inf = %.3f %s (fibra inferior)", dInf.val, dInf.unit);
     gfx_PrintStringXY(buf, 2, 86);
 
@@ -276,7 +323,7 @@ static void draw_page_tensoes(double M, double x_pos, int origem,
                               double ymin, double ymax,
                               double Ix,
                               const char *unit_name,
-                              double unit_factor) {
+                              DispConfig disp_cfg) {
     (void)unit_name;
     gfx_FillScreen(0);
     gfx_SetTextFGColor(1);
@@ -284,7 +331,7 @@ static void draw_page_tensoes(double M, double x_pos, int origem,
     gfx_PrintStringXY("ETAPA 3 - TENSOES POR FLEXAO", 2, 2);
 
     char buf[STRBUF];
-    DispVal dxpos = disp_len(x_pos, viga_get_unit_factor());
+    DispVal dxpos = disp_len(x_pos, disp_cfg);
 
     if (origem == 0) {
         gfx_PrintStringXY("Caso: momento informado (sem viga)", 2, 18);
@@ -312,7 +359,7 @@ static void draw_page_tensoes(double M, double x_pos, int origem,
     double y_sup_abs = fabs(dy_sup);
     double y_inf_abs = fabs(dy_inf);
 
-    DispVal dy_disp = disp_len(y_sup_abs, unit_factor); /* usa mesma unidade para sup/inf */
+    DispVal dy_disp = disp_len(y_sup_abs, disp_cfg); /* usa mesma unidade para sup/inf */
     double y_sup_show = dy_disp.val;
     double y_inf_show = dy_inf < 0 ? -(y_inf_abs / dy_disp.factor)
                                    :  (y_inf_abs / dy_disp.factor);
@@ -383,6 +430,8 @@ static void mostrar_etapas(double M, double x_pos, int origem) {
     const char *unit_name = centroid_get_unit_name();
     double unit_factor = centroid_get_unit_factor();
 
+    DispConfig disp_cfg = selecionar_unidade_resposta(unit_factor, unit_name);
+
     /* distancias extremas positivas (usadas na tela 2) */
     double y_sup = fabs(ymax - ybar);
     double y_inf = fabs(ybar - ymin);
@@ -394,13 +443,13 @@ static void mostrar_etapas(double M, double x_pos, int origem) {
 
     while (1) {
         if (page == 0) {
-            draw_page_centroid(xbar, ybar, unit_name, unit_factor);
+            draw_page_centroid(xbar, ybar, unit_name, disp_cfg);
         } else if (page == 1) {
-            draw_page_inercia(Ix, y_sup, y_inf, unit_name, unit_factor);
+            draw_page_inercia(Ix, y_sup, y_inf, unit_name, disp_cfg);
         } else {
             draw_page_tensoes(M, x_pos, origem,
                               xbar, ybar, ymin, ymax,
-                              Ix, unit_name, unit_factor);
+                              Ix, unit_name, disp_cfg);
         }
 
         gfx_SetTextFGColor(1);
